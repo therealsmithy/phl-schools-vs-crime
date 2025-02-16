@@ -1,4 +1,5 @@
 library(dplyr)
+library(tidyr)
 
 # Load in files we need
 grad_rates <- read.csv('data/SDP_Graduation_rates_school_S_2024-04-01.csv')
@@ -16,5 +17,13 @@ school_data <- grad_rates %>%
   left_join(school_list %>% select('ULCS.Code', 'GPS.Location'),
             by = c('schoolid_ulcs' = 'ULCS.Code'))
 
+# Split up GPS into lat and long
+school_data <- school_data %>% 
+  separate(GPS.Location, c('lat', 'long'), sep = ', ', convert = TRUE)
+           
+# Drop empty coordinate
+school_data <- school_data %>% 
+  filter(!is.na(lat))
+           
 # Save as csv
 #write.csv(school_data, 'data/school_data.csv', row.names = FALSE)
