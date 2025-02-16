@@ -1,9 +1,9 @@
 ---
 title: "Cool (dope) Project Title"
 author:
-- Group Member 1
-- Group Member 2
-- Group Member 3
+- Liam Smith
+- Tyler Christianson
+- Mitch Jeter
 date: "Spring 2025"
 output:
   pdf_document:
