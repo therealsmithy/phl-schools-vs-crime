@@ -1,0 +1,61 @@
+---
+title: "Cool (dope) Project Title"
+author:
+- Group Member 1
+- Group Member 2
+- Group Member 3
+date: "Spring 2025"
+output:
+  pdf_document:
+    toc: true
+    toc_depth: '4'
+    number_sections: true
+  html_document:
+    code_folding: show
+    highlight: haddock
+    number_sections: true
+    theme: lumen
+    toc: true
+    toc_depth: 4
+    toc_float: true
+urlcolor: blue
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, results = "hide", fig.width=8, fig.height=4)
+options(scipen = 0, digits = 3)  # controls base R output
+if(!require('pacman')) {install.packages('pacman')}
+pacman::p_load(tidyverse, ggplot, sf, mapview)
+```
+
+\pagebreak
+
+# Overview and goal of study
+
+Find a problem that interests you the most and/or has potential social impact (growing the good in business!) State your goal of study clearly and why do you care about it.
+
+```{r, results=T}
+print(1+1)
+```
+
+# Data description
+
+Describe the dataset you will use for the study including the sources and what information we can extract to help our analysis. Always include the data dictionary somewhere so that other people can look it up (you can put it in a separate file/link or put it in the Appendix). 
+
+
+# Exploratory data analysis (EDA)
+
+Use what we learnt so far to make the beautiful plots! Understanding your data is extremely important for our analysis in next step.  
+
+
+# Appendix {-}
+
+Put all supplementary materials in Appendix so that we do not lose focus in the main text but at the same time provide all relevant information for your reader/colleague/boss as well as **the future you** for reference!
+
+## Data dictionary
+
+## Data cleaning process
+
+...
+
