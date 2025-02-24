@@ -4,7 +4,7 @@ author:
 - Liam Smith
 - Tyler Christianson
 - Mitch Jeter
-date: "Spring 2025"
+date: "March 2nd, 2025"
 output:
   pdf_document:
     toc: true
@@ -31,31 +31,139 @@ pacman::p_load(tidyverse, ggplot, sf, mapview)
 
 \pagebreak
 
-# Overview and goal of study
+# Executive Summary
+## Goal of the Study
+The primary objective of this project is to explore and understand the relationship between the Philadelphia Public Schooling System and crime rates in the city of Philadelphia. The relationship between education and crime has long been a topic of interest for policymakers and researchers, as strong education systems are often associated with lower crime rates. This project aims to analyze the connection between the public school system and crime rates across the city, exploring how factors such as graduation rates influence crime patterns. By leveraging records from 2023 and various statistical and machine learning methods, this study seeks to uncover potential relationships and provide insights that could inform policy decisions geared towards improving both education and public safety in the city of Philadelphia.
 
-Find a problem that interests you the most and/or has potential social impact (growing the good in business!) State your goal of study clearly and why do you care about it.
+Through data-driven analysis, this project will look into specific neighborhoods and evaluate the relationship between crime rates and the quality of public schools in the area. By identifying factors that contribute to this relationship, this study can serve as a potential foundation for discussions on how investments in education can serve as a proactive step towards crime prevention. 
 
-```{r, results=T}
-print(1+1)
-```
+## Data description
+### Crime Incidents Data
+The Philadelphia Police Department provides and maintains a dataset of crime incidents in the city of Philadelphia going back to 2006. The dataset contains key information about each incident, including the police district it occured in, the date and time an officer was dispatched to the scene, the block that the incident occured on, and the type of crime that was committed. For the purposes of this study, the only year used was 2023.
 
-# Data description
+### School Department of Philadelphia Data
+The School District of Philadelphia provides a variety of datasets regarding school performance. This study is based on the School Graduation Rates dataset, which is a longitudinal dataset containing the graduation rate by school broken out by graduation rate type, demographic category, and ninth grade cohort. Students are attributed to the last school that they attended if they did attend multiple schools. For the purposes of this study, the cohort that started high school in 2019 was used.
 
-Describe the dataset you will use for the study including the sources and what information we can extract to help our analysis. Always include the data dictionary somewhere so that other people can look it up (you can put it in a separate file/link or put it in the Appendix). 
-
+### Neighborhood GeoJSON Data
+The city of Philadelphia provides neighborhood boundaries for over 150 neighborhoods in the city. This dataset will be used for mapping and also for grouping schools and crime incidents by neighborhood.
 
 # Exploratory data analysis (EDA)
 
-Use what we learnt so far to make the beautiful plots! Understanding your data is extremely important for our analysis in next step.  
+## Exploring Crime
+
+## Exploring Schools
 
 
+\pagebreak
 # Appendix {-}
 
 Put all supplementary materials in Appendix so that we do not lose focus in the main text but at the same time provide all relevant information for your reader/colleague/boss as well as **the future you** for reference!
 
 ## Data dictionary
+A detailed summary of the variables in each data set follows:
+
+### Crime Incidents
+*Source:* https://metadata.phila.gov/#home/datasetdetails/5543868920583086178c4f8e/representationdetails/570e7621c03327dc14f4b68d/?view_287_page=1 
+*Description:* Part 1 & Part 2 Crime Incidents from the Police Department's INCT system with generalized UCR codes and addresses rounded to the hundred block. These counts may not coincide exactly with data that is submitted to the Uniformed Crime Reporting (UCR) system.
+* the_geom - Unique identifier
+* cartodb_id - Unique identifier
+* the_geom_webmercator - Unique identifier
+* objectid - Unique identifier
+* dc_dist - A two character field that names the District boundary
+* psa - A single character field that names the Police Service Area Boundary
+* dispatch_date_time - The date and time that the officer was dispatched to the scene
+* dispatch_date - Dispatch date formatted as a string
+* dispatch_time - Dispatch time formatted as a string
+* hour_ - The generalized hour of the dispatched time
+* dc_key - The unique identifier of the crime that consists of Year + District + Unique ID
+* location_block - The location of crime generalized by street block
+* ucr_general - The rounded crime code
+* text_general_code - The generalized text for the crime code
+* point_x - Longitude of crime location
+* point_y - Latitude of crime location
+* lat - Latitude of crime location
+* lng - Longitude of crime location
+
+### School Department of Philadelphia
+*Source:* https://www.philasd.org/research/#opendata
+*Description:* This longitudinal open data file includes information about the graduation rates for schools broken out by: graduation rate type (four-year, five-year, or six-year), demographic category (EL status, IEP status, Economically Disadvantaged Status, Gender, or Ethnicity), and 9th grade cohort. Students are attributed to the last school at which they actively attended in the respective graduation window, which ends on September 30 each year. Students are classified as EL, as having an IEP, and/or economically disadvantaged if they were designated as such at any point during their high school career.
+* cohort - School year that freshman began
+* schoolid_ulcs - Unique school identifier
+* school_name - School name
+* sector - Type of school (Two levels - District and Alternative)
+* rate_type - Graduation rate type
+* group - Grouping of students
+* subgroup - Subgrouping of students
+* denom - Number of students in cohort
+* num - Number of students that graduated in cohort
+* score - Percentage of students that graduated in cohort
+* lat - Latitude of school location
+* long - Longitude of crime location
+
+### Neighborhood GeoJSON
+*Source:* https://opendataphilly.org/datasets/philadelphia-neighborhoods/
+*Description:* This dataset includes neighborhood boundaries for 150+ neighborhoods in Philadelphia. The data was gathered from a mix of publicly available maps, including from the City of Philadelphia, the City Archives, the Philadelphia Inquirer, and user feedback.
+* NAME - Neighborhood name
+* LISTNAME - Neighborhood name
+* MAPNAME - Neighborhood name
+* Shape_Leng - Length of shape of neighborhood boundary
+* Shape_Area - Total area inside shape of neighborhood
+* geometry - Polygon coordinates of neighborhood boundary
 
 ## Data cleaning process
 
-...
+### Putting crime incidents into neighborhoods
+```{r}
+# Load in data
+neighborhood <- st_read('data/philadelphia-neighborhoods.geojson')
+crime <- read.csv('data/crime-incidents-2023.csv')
+
+# Filter out missing coordinates in crime
+crime <- crime %>% filter(!is.na(lat) & !is.na(lng))
+
+# Convert crime to sf
+crime_sf <- st_as_sf(crime, coords = c('lng', 'lat'), crs = 4326)
+
+# Make sure both have same CRS
+neighborhood <- st_make_valid(neighborhood)
+
+# Simplify geometries
+neighborhood <- st_simplify(neighborhood, dTolerance = 0.001)
+
+# Spatial join to get neighborhood for each crime
+crime_w_neighborhoods <- st_join(crime_sf, neighborhood, join = st_intersects)
+
+# Save to a new csv
+#write.csv(crime_w_neighborhoods, 'data/crime-by-neighborhood.csv')
+```
+
+### Combining school coordinates with graduation rates
+```{r}
+# Load in files we need
+grad_rates <- read.csv('data/SDP_Graduation_rates_school_S_2024-04-01.csv')
+school_list <- read.csv('data/2022-2023 Master SChool List (20230110).csv')
+
+# First, let's clean up the graduation rates
+# We only want the graduating class of 2023, 4 year grad rates, for all students
+grad_rates <- grad_rates %>% 
+  filter(cohort == '2019-2020',
+         rate_type == '4-Year Graduation Rate',
+         group == 'All Students')
+
+# Next let's bring in the latitude and longitude from the school list
+school_data <- grad_rates %>% 
+  left_join(school_list %>% select('ULCS.Code', 'GPS.Location'),
+            by = c('schoolid_ulcs' = 'ULCS.Code'))
+
+# Split up GPS into lat and long
+school_data <- school_data %>% 
+  separate(GPS.Location, c('lat', 'long'), sep = ', ', convert = TRUE)
+           
+# Drop empty coordinate
+school_data <- school_data %>% 
+  filter(!is.na(lat))
+           
+# Save as csv
+#write.csv(school_data, 'data/school_data.csv', row.names = FALSE)
+```
 

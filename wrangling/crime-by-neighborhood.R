@@ -21,4 +21,4 @@ neighborhood <- st_simplify(neighborhood, dTolerance = 0.001)
 crime_w_neighborhoods <- st_join(crime_sf, neighborhood, join = st_intersects)
 
 # Save to a new csv
-#write.csv(crime_w_neighborhoods, 'data/crime-by-neighborhood.csv')
+write.csv(crime_w_neighborhoods, 'data/crime-by-neighborhood.csv')
