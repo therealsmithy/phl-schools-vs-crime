@@ -27,14 +27,14 @@ urlcolor: blue
 knitr::opts_chunk$set(echo = FALSE, results = "hide", fig.width=8, fig.height=4)
 options(scipen = 0, digits = 3)  # controls base R output
 if(!require('pacman')) {install.packages('pacman')}
-pacman::p_load(dplyr, ggmap, ggplot2, sf, mapview, knitr, lubridate)
+pacman::p_load(dplyr, ggmap, ggplot2, sf, mapview, knitr, lubridate, ggpubr, tidyr)
 ```
 
 ```{r data load}
-neighborhoods <- st_read('data/philadelphia-neighborhoods.geojson') %>% 
+neighborhoods <- st_read('data/raw/philadelphia-neighborhoods.geojson') %>% 
   st_transform(4326)
-crime <- read.csv('data/crime-by-neighborhood.csv')
-schools <- read.csv('data/school_data.csv')
+crime <- read.csv('data/clean/crime-by-neighborhood.csv')
+schools <- read.csv('data/clean/schools-by-neighborhood.csv')
 ```
 
 \pagebreak
@@ -98,6 +98,13 @@ This map will serve as a foundation for this project and the following explorato
 Philadelphia has long faced challenges with crime, making public safety a key concern for residents and city officials alike. The Philadelphia Police Department (PPD), one of the oldest municipal police forces in the United States, is responsible for maintaining law and order across the city's diverse neighborhoods. Crime rates in Philadelphia have fluctuated over the years, with violent crime, particularly gun violence, being a persistent issue in certain areas. Factors such as socioeconomic conditions, education, and policing strategies all play a role in shaping crime trends throughout the city. While initiatives like community policing and crime prevention programs aim to reduce criminal activity, disparities in crime rates across neighborhoods highlight the need for a data-driven approach to understanding and addressing public safety concerns.
 
 Crime incidents are categorized two different ways by the city of Philadelphia: Part 1 and Part 2. Part 1 crimes are more serious offenses. Part 1 crimes are as follows: Homicide (Criminal), Homicide (Justifiable), Homicide (Gross Negligence), Rape, Robbery Firearm, Robbery No Firearm, Aggravated Assault Firearm, Aggravated Assault No Firearm, Burglary Non-Residential, Burglary Residential, Theft from Vehicle, Retail Theft, Motor Vehicle Theft, and Recovered Stolen Motor Vehicle. Part 2 crimes are less serious offenses. Part 2 crimes are as follows: Other Assaults, Arson, Forgery and Counterfeiting, Fraud, Embezzlement, Recieving Stolen Property, Vandalism/Criminal Mischief, Weapon Violations, Prostitution and Commericalized Vice, Other Sex Offenses, Narcotic/Drug Law Violations, Gambling Violations, Offenses Against Family and Children, DUI, Liquor Law Violations, Drunkenness, Disorderly Conduct, Vagrancy, and All Other Offenses. The top five most commited crimes by Part are as follows: 
+
+```{r}
+# Convert crime code to factor
+crime <- crime %>% 
+  mutate(ucr_general = as.factor(ucr_general))
+```
+
 ```{r}
 top_5_p1 <- crime %>% 
               filter(ucr_general %in% c('100', '200', '300', '400', '600', '700')) %>%
@@ -157,7 +164,7 @@ kable(inc_by_neighborhood[1:10,], caption = "Top 10 Neighborhoods by Crime Incid
 And a crime heatmap can be seen here:
 
 ```{r}
-# Merge crime counts with spacial neighborhood data
+# Merge crime counts with spatial neighborhood data
 neighborhoods_crime <- neighborhoods %>% 
   left_join(inc_by_neighborhood, by = c('LISTNAME' = 'LISTNAME'))
 
@@ -174,11 +181,139 @@ ggplot(data = neighborhoods_crime) +
   theme_minimal()
 ```
 
-
-
 ## Exploring Schools
 
-The School District of Philadelphia (SDP) is the largest public school system in Pennsylvania, serving over 200,000 students across a diverse and dynamic urban landscape. With a mix of traditional public schools, charter schools, and specialized programs, the district plays a crucial role in shaping educational opportunities for children in the city. However, SDP has long faced challenges related to funding disparities, aging infrastructure, and achievement gaps among students from different socioeconomic backgrounds. Despite these obstacles, the district continues to implement reforms aimed at improving academic performance, increasing graduation rates, and expanding access to quality education. As education is closely linked to broader social and economic outcomes, understanding the strengths and struggles of Philadelphia’s public schools is essential in analyzing larger community trends, including crime and economic mobility.
+The School District of Philadelphia (SDP) is the largest public school system in Pennsylvania, serving over 200,000 students across a diverse and dynamic urban landscape. With a mix of traditional public schools, charter schools, and specialized programs, the district plays a crucial role in shaping educational opportunities for children in the city. However, SDP has long faced challenges related to funding disparities, aging infrastructure, and achievement gaps among students from different socioeconomic backgrounds. Despite these obstacles, the district continues to implement reforms aimed at improving academic performance, increasing graduation rates, and expanding access to quality education. As education is closely linked to broader social and economic outcomes, understanding the strengths and struggles of Philadelphia’s public schools is essential in analyzing larger community trends, including crime and resulting mobility.
+
+Graduation rates are a key metric for assessing school performance and student success. A high school diploma is a critical milestone that opens doors to higher education, career opportunities, and economic stability. Graduation rates can vary significantly across schools and student populations, reflecting differences in academic support, resources, and community factors. Schools with higher graduation rates often have strong leadership, effective teaching practices, and supportive learning environments that help students stay engaged and motivated to complete their education. By analyzing graduation rates by school and demographic group, we can identify patterns, disparities, and areas for improvement within the public school system. Across the city the average four-year graduation rate is 67.3%.
+
+```{r data prep, message = FALSE, warning = FALSE}
+schools <- schools %>% 
+  filter(!is.na(as.numeric(score))) %>% 
+  mutate(score = as.numeric(score))
+```
+
+
+```{r}
+avg_grad_rate <- mean(schools$score)
+avg_grad_rate
+```
+
+The top ten schools by four-year graduation rate are as follows:
+
+```{r, message = FALSE, warning = FALSE}
+graduation_rates <- schools %>% 
+  summarise(schoolname = schoolname, score = score) %>%
+  arrange(desc(as.numeric(score)))
+```
+
+```{r, echo = FALSE, results = 'asis'}
+kable(graduation_rates[1:10,], caption = "Top 10 Schools by Four-Year Graduation Rate", col.names = c('School', 'Graduation Rate'))
+```
+
+Inversely, the lowest ten schools by four-year graduation rate can be seen here:
+
+```{r, message = FALSE, warning = FALSE}
+graduation_rates_low <- schools %>% 
+  summarise(schoolname = schoolname, score = score) %>%
+  arrange(as.numeric(score))
+```
+
+```{r, echo = FALSE, results = 'asis'}
+kable(graduation_rates_low[1:10,], caption = "Bottom 10 Schools by Four-Year Graduation Rate", col.names = c('School', 'Graduation Rate'))
+```
+
+The distribution of graduation rates across schools can be visualized in a histogram:
+
+```{r, fig.show='hold', message = FALSE, warning = FALSE}
+ggplot(schools, aes(x = score)) +
+  geom_histogram(fill = 'lightblue', color = 'black', bins = 10) +
+  labs(title = 'Distribution of Four-Year Graduation Rates', x = 'Graduation Rate', y = 'Count') +
+  theme_minimal()
+```
+
+As seen in the histogram, graduation rates among Philadelphia schools vary widely, with some schools achieving high rates of success while others struggle to graduate students on time. Factors such as school leadership, teacher quality, student engagement, and community support all play a role in determining graduation outcomes. Schools with lower graduation rates may face challenges related to student retention, academic performance, and social-emotional support, highlighting the need for targeted interventions and resources to help students succeed. By analyzing graduation rates at the school level, we can identify areas for improvement and develop strategies to increase student achievement and promote educational equity across the city.
+
+The distribution of these schools across the city as well as a heatmap of their four-year graduation rates can be seen here:
+
+```{r}
+# Split out the GPS coordinates
+schools <- schools %>%
+  mutate(geometry = gsub("c\\(|\\)", "", geometry)) %>%
+  separate(geometry, into = c("lat", "long"), sep = ", ", convert = TRUE) %>% 
+  st_as_sf(coords = c("lat", "long"), crs = 4326)
+```
+
+```{r, fig.show='hold', message = FALSE, warning = FALSE}
+grad_rate_map <- ggmap(phl_map) +
+  geom_point(data = schools, aes(x = st_coordinates(geometry)[,1], 
+                                 y = st_coordinates(geometry)[,2], 
+                                 color = score), 
+             size = 3) +
+  scale_color_viridis_c(option = 'magma', na.value = 'gray90') +
+  labs(color = 'Graduation Rate') +
+  theme_minimal()
+
+grad_rate_map
+```
+
+It is important to understand how schools perform based on the location that they are in. By understanding the distribution of schools and their graduation rates, we can better understand how schools are performing in different neighborhoods. The top 5 neighborhoods by average graduation rate are as follows:
+
+```{r}
+grad_by_neighborhood_high <- schools %>% 
+  group_by(LISTNAME) %>% 
+  summarise(avg_score = mean(score),
+            num_schools = n()) %>% 
+  arrange(desc(avg_score)) %>% 
+  head(5) %>% 
+  st_drop_geometry()
+```
+
+```{r, echo = FALSE, results = 'asis'}
+kable(grad_by_neighborhood_high, caption = "Top 5 Neighborhoods by Average Graduation Rate", 
+      col.names = c('Neighborhood', 'Average Graduation Rate', 'Number of Schools'))
+```
+
+And the bottom 5 neighborhoods by average graduation rate are as follows:
+
+```{r}
+grad_by_neighborhood_low <- schools %>% 
+  group_by(LISTNAME) %>% 
+  summarise(avg_score = mean(score),
+            num_schools = n()) %>% 
+  arrange(avg_score) %>% 
+  head(5) %>% 
+  st_drop_geometry()
+```
+
+```{r, echo = FALSE, results = 'asis'}
+kable(grad_by_neighborhood_low, caption = "Bottom 5 Neighborhoods by Average Graduation Rate", 
+      col.names = c('Neighborhood', 'Average Graduation Rate', 'Number of Schools'))
+```
+
+A heatmap of the average graduation rates by neighborhood can be seen here:
+
+```{r, fig.show='hold', message = FALSE, warning = FALSE}
+grad_by_neighborhood <- schools %>% 
+  group_by(LISTNAME) %>% 
+  summarise(avg_score = mean(score)) %>% 
+  st_drop_geometry()
+
+# Merge graduation rates with spatial neighborhood data
+neighborhoods_grad <- neighborhoods %>% 
+  left_join(grad_by_neighborhood, by = c('LISTNAME' = 'LISTNAME'))
+
+# Convert to df for plot
+neighborhoods_grad_df <- fortify(neighborhoods_grad, region = 'Name')
+
+ggplot(data = neighborhoods_grad) +
+  geom_sf(data = neighborhoods_grad, aes(fill = avg_score), color = 'black') +
+  scale_fill_viridis_c(option = 'magma', na.value = 'gray90') +
+  labs(title = 'Graduation Rate Heatmap by Neighborhood', fill = 'Average Graduation Rate') +
+  theme_minimal()
+```
+
+Now that there is a good understanding of the city of Philadelphia, the distribution of crime and schools, and the relationship between schools and crime, we can move on to the analysis of the relationship between the two.
 
 \pagebreak
 # Appendix {-}
@@ -293,15 +428,56 @@ A detailed summary of the variables in each data set follows:
 * lat - Latitude of school location
 * long - Longitude of crime location
 
+#### School Data with Neighborhood \newline
+
+*Description:* This clean dataset contains school performance metrics from 2023, including four year graduation rates by school, sector, and demographic group, along with geographical coordinates for spatial analysis and neighborhood information.
+
+* cohort - School year that freshman began
+* schoolid_ulcs - Unique school identifier
+* school_name - School name
+* sector - Type of school (Two levels - District and Alternative)
+* rate_type - Graduation rate type
+* group - Grouping of students
+* subgroup - Subgrouping of students
+* denom - Number of students in cohort
+* num - Number of students that graduated in cohort
+* score - Percentage of students that graduated in cohort
+* NAME - Neighborhood name
+* LISTNAME - Neighborhood name
+* MAPNAME - Neighborhood name
+* Shape_Leng - Length of shape of neighborhood boundary
+* Shape_Area - Total area inside shape of neighborhood
+* geometry - Coordinates of school location
+
 ## Data Prep for EDA
 
 The type of crime is very important for grouping incidents. UCR code is grouped as a factor for easier analysis.
 
-```{r}
+```{r, echo=TRUE, eval=FALSE}
 # Convert crime code to factor
 crime <- crime %>% 
   mutate(ucr_general = as.factor(ucr_general))
 ```
+
+Some of the school scores are missing, so any that cannot be converted to numeric will be removed.
+
+```{r, echo=TRUE, eval=FALSE}
+# Filter schools where 'score' is numeric
+schools <- schools %>% 
+  filter(!is.na(as.numeric(score))) %>% 
+  mutate(score = as.numeric(score))
+```
+
+In order to plot, the school's GPS coordinates have to be split.
+
+```{r, echo=TRUE, eval=FALSE}
+# Split out the GPS coordinates
+schools <- schools %>%
+  mutate(geometry = gsub("c\\(|\\)", "", geometry)) %>%
+  separate(geometry, into = c("lat", "long"), sep = ", ", convert = TRUE) %>% 
+  st_as_sf(coords = c("lat", "long"), crs = 4326)
+```
+
 
 ## Data cleaning process
 
@@ -366,3 +542,25 @@ school_data <- school_data %>%
 #write.csv(school_data, 'data/school_data.csv', row.names = FALSE)
 ```
 
+## Putting schools into neighborhoods
+
+```{r, echo=TRUE, eval=FALSE}
+# Merge school locations with spatial neighborhood data
+# Filter out missing coordinates in schools
+schools <- schools %>% filter(!is.na(lat) & !is.na(long))
+
+# Convert crime to sf
+schools_sf <- st_as_sf(schools, coords = c('long', 'lat'), crs = 4326)
+
+# Make sure both have same CRS
+neighborhoods <- st_make_valid(neighborhoods)
+
+# Simplify geometries
+neighborhoods <- st_simplify(neighborhoods, dTolerance = 0.001)
+
+# Spatial join to get neighborhood for each crime
+schools_w_neighborhoods <- st_join(schools_sf, neighborhoods, join = st_intersects)
+
+# Save to a new csv
+#write.csv(schools_w_neighborhoods, 'data/crime-by-neighborhood.csv')
+```
