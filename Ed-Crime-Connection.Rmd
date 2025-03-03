@@ -27,7 +27,8 @@ urlcolor: blue
 knitr::opts_chunk$set(echo = FALSE, results = "hide", fig.width=8, fig.height=4)
 options(scipen = 0, digits = 3)  # controls base R output
 if(!require('pacman')) {install.packages('pacman')}
-pacman::p_load(dplyr, ggmap, ggplot2, sf, mapview, knitr, lubridate, ggpubr, tidyr)
+pacman::p_load(dplyr, ggmap, ggplot2, sf, mapview, knitr, lubridate, ggpubr, tidyr, fixest, sp, glmnet,
+               caret, pROC, tidyverse)
 ```
 
 ```{r data load}
@@ -315,6 +316,222 @@ ggplot(data = neighborhoods_grad) +
 
 Now that there is a good understanding of the city of Philadelphia, the distribution of crime and schools, and the relationship between schools and crime, we can move on to the analysis of the relationship between the two.
 
+# Regressions
+
+We are going to start by running a simple regression to see if there is a relationship between a school's graduation rate and the total number of crimes within a 1-mile radius of the school.
+
+```{r, eval=FALSE}
+model1 <- lm(as.numeric(score) ~ crime_total, data = school_crime_features)
+summary(model1)
+```
+
+The results of the simple regression show that there is not a significant relationship between a school's graduation rate and the total number of crimes within a 1-mile radius of the school. The p-value for the crime_total variable is 0.37, which is above the typical threshold of 0.05 for statistical significance. This suggests that the number of crimes near a school does not have a strong impact on the school's graduation rate. However, it is important to note that this is a simple regression model and does not account for other potential factors that could influence the relationship between crime and education.
+
+```{r}
+# Load datasets (update file paths as needed)
+crime_data <- read.csv("data/raw/crime-incidents-2023.csv")
+school_data <- read.csv("data/clean/school_data.csv")
+
+# Remove missing values
+crime_data <- na.omit(crime_data)
+school_data <- na.omit(school_data)
+
+# Aggregate Crime Data by School Location
+# Create a matrix of crime type counts within a 1-mile radius of each school
+
+# Function to count crimes within 1-mile (~0.016 degrees) radius per school
+count_crimes_near_school <- function(lat, lon, crime_df) {
+  crime_subset <- crime_df %>%
+    filter(sqrt((lat - crime_df$lat)^2 + (lon - crime_df$lng)^2) < 0.016)
+  return(nrow(crime_subset))
+}
+
+school_data$crime_count <- mapply(count_crimes_near_school, school_data$lat, school_data$long, MoreArgs = list(crime_df = crime_data))
+
+# Dummy Variable Crime Categories
+crime_data$crime_type <- as.factor(crime_data$text_general_code)
+crime_matrix <- model.matrix(~ crime_type - 1, data = crime_data)  # Dummy encoding
+
+# Aggregate the one-hot encoded crimes by school proximity
+school_crime_features <- school_data %>%
+  select(schoolname, lat, long, score) %>%
+  mutate(crime_total = school_data$crime_count)
+
+# Add aggregated crime types per school
+for (crime_col in colnames(crime_matrix)) {
+  school_crime_features[[crime_col]] <- sapply(1:nrow(school_data), function(i) {
+    lat <- school_data$lat[i]
+    lon <- school_data$long[i]
+    sum(crime_matrix[sqrt((crime_data$lat - lat)^2 + (crime_data$lng - lon)^2) < 0.016, crime_col])
+  })
+}
+```
+
+```{r, eval=FALSE}
+# Prepare X matrix and y for Regression
+X <- as.matrix(school_crime_features %>% select(-schoolname, -lat, -long, -score))
+y <- as.numeric(school_crime_features$score)
+
+# Standardize Features
+X_scaled <- scale(X)
+
+# LASSO Regression with Cross-Validation
+# Ensure y (graduation rate) is numeric
+y <- as.numeric(school_crime_features$score)
+
+# Remove rows where y is NA
+valid_rows <- !is.na(y)
+X_scaled <- X_scaled[valid_rows, , drop = FALSE]
+y <- y[valid_rows]
+
+# Ensure y has variation
+if (var(y) == 0) {
+  stop("Error: y has no variation. Check data preprocessing.")
+}
+
+# Run LASSO Regression
+set.seed(15)
+lasso_model <- cv.glmnet(X_scaled, y, alpha = 1, nfolds = 10)  # LASSO (alpha = 1)
+plot(lasso_model)
+
+# Get selected features from LASSO
+coef_lasso <- coef(lasso_model, s = "lambda.1se")
+selected_lasso <- coef_lasso[which(coef_lasso != 0), , drop = FALSE]
+#print(selected_lasso)
+```
+
+```{r, eval=FALSE}
+# Ridge Regression to see if the shrinking has any effect
+set.seed(15)
+ridge_model <- cv.glmnet(X_scaled, y, alpha = 0, nfolds = 10)  # Ridge (alpha = 0)
+plot(ridge_model)
+
+# Get coefficients from Ridge Regression
+coef_ridge <- coef(ridge_model, s = "lambda.1se")
+selected_ridge <- coef_ridge[which(abs(coef_ridge) > 0.01), , drop = FALSE]
+print(selected_ridge)
+```
+
+```{r need this for logistic to run, eval=FALSE}
+# Load datasets
+crime_data <- read.csv("data/raw/crime-incidents-2023.csv")
+school_data <- read.csv("data/clean/school_data.csv")
+
+table(crime_data$text_general_code)  # Checking crime categories
+
+# Define binary graduation rate variable (High = 1, Low = 0)
+graduation_threshold <- 80  # Example threshold for high graduation rate
+school_data$High_Grad <- ifelse(as.numeric(school_data$score) >= graduation_threshold, 1, 0)
+
+# Define crime categories
+violent_crimes <- c("Homicide", "Aggravated Assault", "Robbery", "Rape")
+crime_data$Violent <- ifelse(crime_data$text_general_code %in% violent_crimes, 1, 0)
+
+# Remove rows with missing latitude or longitude
+crime_data <- crime_data %>% drop_na(lat, lng)
+
+# Convert to spatial data frames
+crime_sf <- st_as_sf(crime_data, coords = c("lng", "lat"), crs = 4326)
+school_sf <- st_as_sf(school_data, coords = c("long", "lat"), crs = 4326)
+
+# Buffer schools to create a 1 km radius for crime aggregation
+school_buffers <- st_buffer(school_sf, dist = 1000)  # 1000 meters = 1 km
+
+#Spatial join: Count crimes within each school’s buffer
+crime_counts <- st_join(school_buffers, crime_sf) %>%
+  group_by(schoolid_ulcs) %>%
+  summarize(
+    Violent_Crime_Rate = mean(Violent, na.rm = TRUE),
+    Non_Violent_Crime_Rate = 1 - mean(Violent, na.rm = TRUE),
+    Total_Crime = n()
+  )
+```
+
+
+```{r, eval=FALSE}
+# Merge school data with aggregated crime data
+merged_data <- school_data %>%
+  left_join(crime_counts, by = "schoolid_ulcs") %>%
+  drop_na()
+
+# Split into training and testing sets
+set.seed(123)
+train_index <- createDataPartition(merged_data$High_Grad, p = 0.7, list = FALSE)
+train_data <- merged_data[train_index, ]
+test_data <- merged_data[-train_index, ]
+
+# Fit logistic regression model
+logit_model <- glm(High_Grad ~ Violent_Crime_Rate + Total_Crime, 
+                   data = train_data, family = binomial)
+summary(logit_model)
+
+# Make predictions
+pred_probs <- predict(logit_model, newdata = test_data, type = "response")
+test_data$Predicted <- ifelse(pred_probs > 0.5, 1, 0)
+
+# Evaluate model performance
+conf_matrix <- confusionMatrix(factor(test_data$Predicted), factor(test_data$High_Grad))
+print(conf_matrix)
+
+# ROC Curve and AUC
+roc_curve <- roc(test_data$High_Grad, pred_probs)
+plot(roc_curve, col = "blue", main = "ROC Curve")
+auc(roc_curve)
+```
+
+```{r, eval=FALSE}
+#Just a quick regression on 50% graduation rate.
+
+# Merge school data with aggregated crime data
+merged_data <- school_data %>%
+  left_join(crime_counts, by = "schoolid_ulcs") %>%
+  drop_na()
+
+# Split into training and testing sets
+set.seed(123)
+train_index <- createDataPartition(merged_data$High_Grad, p = 0.5, list = FALSE)
+train_data <- merged_data[train_index, ]
+test_data <- merged_data[-train_index, ]
+
+# Fit logistic regression model
+logit_model <- glm(High_Grad ~ Violent_Crime_Rate + Total_Crime, 
+                   data = train_data, family = binomial)
+summary(logit_model)
+
+# Make predictions
+pred_probs <- predict(logit_model, newdata = test_data, type = "response")
+test_data$Predicted <- ifelse(pred_probs > 0.5, 1, 0)
+
+# Evaluate model performance
+conf_matrix <- confusionMatrix(factor(test_data$Predicted), factor(test_data$High_Grad))
+print(conf_matrix)
+
+# ROC Curve and AUC
+roc_curve <- roc(test_data$High_Grad, pred_probs)
+plot(roc_curve, col = "blue", main = "ROC Curve")
+auc(roc_curve)
+```
+
+We then investigated whether violent and non-violent crime rates influence the likelihood of a school achieving a high graduation rate (above 70%). A logistic regression model was applied to predict the likelihood of a school achieving a high graduation rate based on the independent variables of violent crime rate and total crime (which includes both violent and non-violent offenses). The dependent variable, High_Grad, is a binary indicator representing whether a school has a high graduation rate (>70%).
+
+The results of the analysis indicate that none of the predictors were statistically significant (p > 0.05), likely due to the limited number of variables included in the model. The Akaike Information Criterion (AIC) for the model was 78.446, providing a measure of model fit relative to other possible models. The model predicts probabilities for High_Grad with a classification threshold of 0.7, meaning that a probability greater than or equal to 0.5 is classified as 1 (high graduation rate), while probabilities below 0.7 are classified as 0. Although an increase in violent crime rate appears to reduce the odds of achieving a high graduation rate, the p-value (0.210) indicates that this effect is not statistically significant. As a result, we cannot confidently conclude that violent crime has a real impact on graduation rates.
+
+On top of that, the confusion matrix provides insight into the performance in predicting whether a school has a high graduation rate. The model correctly identified 18 low-graduation schools (true negatives) and 2 high-graduation schools (true positives). However, it also misclassified 17 high-graduation schools as low-graduation (false negatives) and incorrectly predicted 1 low-graduation school as high-graduation (false positive). This results in an accuracy of 52.63%, which is only slightly better than random guessing. The model demonstrates high specificity (94.74%), meaning it is very effective at correctly identifying low-graduation schools. However, its sensitivity is extremely low (10.53%), indicating that it fails to correctly identify most high-graduation schools. In other words, when a school truly has a high graduation rate, the model only detects it 10.53% of the time, making it unreliable for identifying high-performing schools.
+
+Additionally, the precision (66.67%) suggests that when the model does predict a high graduation rate, it is correct about two-thirds of the time. However, the high number of false negatives significantly impacts its usefulness, as many high-graduation schools are being misclassified as low-graduation. The model is heavily biased towards predicting low-graduation schools correctly
+
+The analysis suggests that while there may be a negative relationship between violent crime and high school graduation rates, the current model does not provide statistically significant evidence to support this claim. The lack of significance could be attributed to a limited number of predictor variables, potential non-linear relationships not captured in the model, or the need for additional socioeconomic factors to enhance predictive accuracy. To improve the model and gain better insights, we recommend incorporating additional predictors, such as school funding, poverty rates, and student-teacher ratios. Furthermore, exploring non-linear regression techniques or machine learning models may help capture more complex relationships, and increasing the sample size could improve statistical power. Further research with expanded datasets and alternative modeling approaches could yield more conclusive findings on the impact of crime rates on educational outcomes.
+
+# Conclusion
+
+## Future Work
+
+In a perfect world, we have access to as much data as we would like, whenever we would like it. Unfortunately, due to plenty of constraints, things do not work that way. In the future, we would like to have access to more data to better understand the relationship between crime and education in Philadelphia. This could include data on school funding, student-teacher ratios, poverty rates, and other socioeconomic factors that could influence educational outcomes. By expanding the scope of the analysis and incorporating more data sources, we can gain deeper insights into the factors that impact crime rates and graduation rates in Philadelphia, ultimately informing policy decisions and interventions to improve public safety and educational outcomes in the city.
+
+## Final Statement
+
+In conclusion, this project aimed to explore the relationship between crime rates and school performance in Philadelphia. By analyzing crime incidents and school graduation rates, we sought to identify patterns, trends, and potential correlations between these two critical aspects of urban life. Through exploratory data analysis and various types of regression models, we gained insights into the distribution of crime, school performance metrics, and their spatial relationships across neighborhoods in Philadelphia. While our initial regression models did not yield statistically significant results, they provided a foundation for further research and analysis to better understand the complex interplay between crime and education in the city.
+
 \pagebreak
 # Appendix {-}
 
@@ -564,3 +781,82 @@ schools_w_neighborhoods <- st_join(schools_sf, neighborhoods, join = st_intersec
 # Save to a new csv
 #write.csv(schools_w_neighborhoods, 'data/crime-by-neighborhood.csv')
 ```
+
+## Aggregate Crime Data By School Location
+
+```{r, echo=TRUE, eval=FALSE}
+# Load datasets (update file paths as needed)
+crime_data <- read.csv("data/raw/crime-incidents-2023.csv")
+school_data <- read.csv("data/clean/school_data.csv")
+
+# Remove missing values
+crime_data <- na.omit(crime_data)
+school_data <- na.omit(school_data)
+
+# Aggregate Crime Data by School Location
+# Create a matrix of crime type counts within a 1-mile radius of each school
+
+# Function to count crimes within 1-mile (~0.016 degrees) radius per school
+count_crimes_near_school <- function(lat, lon, crime_df) {
+  crime_subset <- crime_df %>%
+    filter(sqrt((lat - crime_df$lat)^2 + (lon - crime_df$lng)^2) < 0.016)
+  return(nrow(crime_subset))
+}
+
+school_data$crime_count <- mapply(count_crimes_near_school, school_data$lat, school_data$long, MoreArgs = list(crime_df = crime_data))
+
+# Dummy Variable Crime Categories
+crime_data$crime_type <- as.factor(crime_data$text_general_code)
+crime_matrix <- model.matrix(~ crime_type - 1, data = crime_data)  # Dummy encoding
+
+# Aggregate the one-hot encoded crimes by school proximity
+school_crime_features <- school_data %>%
+  select(schoolname, lat, long, score) %>%
+  mutate(crime_total = school_data$crime_count)
+
+# Add aggregated crime types per school
+for (crime_col in colnames(crime_matrix)) {
+  school_crime_features[[crime_col]] <- sapply(1:nrow(school_data), function(i) {
+    lat <- school_data$lat[i]
+    lon <- school_data$long[i]
+    sum(crime_matrix[sqrt((crime_data$lat - lat)^2 + (crime_data$lng - lon)^2) < 0.016, crime_col])
+  })
+}
+```
+
+## Create Crime Counts for Logistic Regression
+```{r, echo=TRUE, eval=FALSE}
+# Load datasets
+crime_data <- read.csv("data/raw/crime-incidents-2023.csv")
+school_data <- read.csv("data/clean/school_data.csv")
+
+table(crime_data$text_general_code)  # Checking crime categories
+
+# Define binary graduation rate variable (High = 1, Low = 0)
+graduation_threshold <- 80  # Example threshold for high graduation rate
+school_data$High_Grad <- ifelse(as.numeric(school_data$score) >= graduation_threshold, 1, 0)
+
+# Define crime categories
+violent_crimes <- c("Homicide", "Aggravated Assault", "Robbery", "Rape")
+crime_data$Violent <- ifelse(crime_data$text_general_code %in% violent_crimes, 1, 0)
+
+# Remove rows with missing latitude or longitude
+crime_data <- crime_data %>% drop_na(lat, lng)
+
+# Convert to spatial data frames
+crime_sf <- st_as_sf(crime_data, coords = c("lng", "lat"), crs = 4326)
+school_sf <- st_as_sf(school_data, coords = c("long", "lat"), crs = 4326)
+
+# Buffer schools to create a 1 km radius for crime aggregation
+school_buffers <- st_buffer(school_sf, dist = 1000)  # 1000 meters = 1 km
+
+#Spatial join: Count crimes within each school’s buffer
+crime_counts <- st_join(school_buffers, crime_sf) %>%
+  group_by(schoolid_ulcs) %>%
+  summarize(
+    Violent_Crime_Rate = mean(Violent, na.rm = TRUE),
+    Non_Violent_Crime_Rate = 1 - mean(Violent, na.rm = TRUE),
+    Total_Crime = n()
+  )
+```
+
